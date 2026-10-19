@@ -206,6 +206,7 @@ int loader_register_handle(void *impl, void *handle, const char *name, loader_re
 	{
 		return 1;
 	}
+
 	return loader_host_register((loader_impl)impl, loader_impl_handle_context(handle),
 		name, invoke, NULL, return_type, arg_size, args_type_id, data);
 }
