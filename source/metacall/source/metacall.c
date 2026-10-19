@@ -39,6 +39,9 @@
 
 #include <portability/portability_atexit.h>
 #include <portability/portability_constructor.h>
+#include <portability/portability_path.h>
+
+#include <dynlink/dynlink.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +75,7 @@ static loader_path plugin_path = { 0 };
 /* -- Private Methods -- */
 
 static int metacall_plugin_extension_load(void);
+static int metacall_self_load(void);
 static void *metacallv_method(void *target, const char *name, method_invoke_ptr call, vector v, void *args[], size_t size);
 static type_id *metacall_type_ids(void *args[], size_t size);
 static void metacall_detour_destructor(void);
@@ -88,8 +92,8 @@ portability_constructor(metacall_constructor)
 		portability_atexit_initialize();
 
 		/* We are running from a different host, initialize the loader of the host
-		* and redirect it to the existing symbols, also avoiding initialization
-		* and destruction of the runtime as it is being managed externally to MetaCall */
+		 * and redirect it to the existing symbols, also avoiding initialization
+		 * and destruction of the runtime as it is being managed externally to MetaCall */
 		if (metacall_host != NULL)
 		{
 			static const char host_str[] = "host";
@@ -193,6 +197,78 @@ plugin_load_from_path_error:
 	metacall_value_destroy(args[0]);
 	metacall_value_destroy(args[1]);
 plugin_extension_error:
+	return result;
+}
+
+static int metacall_self_load(void)
+{
+	dynlink_path lib_path = { 0 }, inc_path = { 0 }, hdr_path = { 0 }, lib_file = { 0 };
+	const char name[] = "metacall"
+#if (!defined(NDEBUG) || defined(DEBUG) || defined(_DEBUG) || defined(__DEBUG__) || defined(__DEBUG))
+		"d"
+#endif
+		;
+	loader_tag tag = "c";
+	loader_path pkg = "metacall";
+	size_t length = 0;
+	void *options, **m, **t, **a;
+	int result;
+
+	if (dynlink_library_path(name, lib_path, &length) != 0)
+	{
+		return 1;
+	}
+
+	snprintf(lib_file, sizeof(lib_file), "%s/%s%s.%s", lib_path, dynlink_prefix(), name, dynlink_extension());
+	snprintf(hdr_path, sizeof(hdr_path), "%s/../include/metacall/metacall.h", lib_path);
+	snprintf(inc_path, sizeof(inc_path), "%s/../include", lib_path);
+
+	if (portability_path_file_exists(hdr_path) != 0)
+	{
+		snprintf(hdr_path, sizeof(hdr_path), "%s/../source/metacall/include/metacall/metacall.h", lib_path);
+		snprintf(inc_path, sizeof(inc_path), "%s/../source/metacall/include", lib_path);
+
+		if (portability_path_file_exists(hdr_path) != 0)
+		{
+			return 1;
+		}
+	}
+
+	options = metacall_value_create_map(NULL, 3);
+	if (options == NULL)
+	{
+		return 1;
+	}
+
+	m = metacall_value_to_map(options);
+
+	/* 1. include_search_paths: [ inc_path ] */
+	m[0] = metacall_value_create_array(NULL, 2);
+	t = metacall_value_to_array(m[0]);
+	t[0] = metacall_value_create_string("include_search_paths", sizeof("include_search_paths") - 1);
+	t[1] = metacall_value_create_array(NULL, 1);
+	a = metacall_value_to_array(t[1]);
+	a[0] = metacall_value_create_string(inc_path, strlen(inc_path));
+
+	/* 2. headers: [ hdr_path ] */
+	m[1] = metacall_value_create_array(NULL, 2);
+	t = metacall_value_to_array(m[1]);
+	t[0] = metacall_value_create_string("headers", sizeof("headers") - 1);
+	t[1] = metacall_value_create_array(NULL, 1);
+	a = metacall_value_to_array(t[1]);
+	a[0] = metacall_value_create_string(hdr_path, strlen(hdr_path));
+
+	/* 3. libs: [ lib_file ] */
+	m[2] = metacall_value_create_array(NULL, 2);
+	t = metacall_value_to_array(m[2]);
+	t[0] = metacall_value_create_string("libs", sizeof("libs") - 1);
+	t[1] = metacall_value_create_array(NULL, 1);
+	a = metacall_value_to_array(t[1]);
+	a[0] = metacall_value_create_string(lib_file, strlen(lib_file));
+
+	/* Pass handle == NULL to register package symbols globally */
+	result = loader_load_from_package(tag, pkg, NULL, options);
+	metacall_value_destroy(options);
 	return result;
 }
 
@@ -332,6 +408,13 @@ int metacall_initialize(void)
 	}
 
 	metacall_initialize_flag = 0;
+
+	/* Self-load MetaCall C API globally via c_loader if opt-in and not in host mode */
+	if (environment_variable_get("METACALL_SELF_LOAD", NULL) != NULL &&
+		environment_variable_get("METACALL_HOST", NULL) == NULL)
+	{
+		metacall_self_load();
+	}
 
 	return 0;
 }
@@ -1714,6 +1797,11 @@ void *metacall_loader(const char *tag)
 
 int metacall_register_loaderv(void *loader, void *handle, const char *name, void *(*invoke)(size_t, void *[], void *), enum metacall_value_id return_type, size_t size, enum metacall_value_id types[], void *data)
 {
+	if (handle == NULL)
+	{
+		return loader_register_global(loader, name, (loader_register_invoke)invoke, (type_id)return_type, size, (type_id *)types, data);
+	}
+
 	return loader_register_handle(loader, handle, name, (loader_register_invoke)invoke, (type_id)return_type, size, (type_id *)types, data);
 }
 

@@ -201,7 +201,19 @@ int loader_register(const char *name, loader_register_invoke invoke, void **func
 
 int loader_register_handle(void *impl, void *handle, const char *name, loader_register_invoke invoke, type_id return_type, size_t arg_size, type_id args_type_id[], void *data)
 {
-	return loader_host_register((loader_impl)impl, loader_impl_handle_context(handle), name, invoke, NULL, return_type, arg_size, args_type_id, data);
+	/* A NULL handle is an error here: a failed handle lookup must not silently become a global registration */
+	if (handle == NULL)
+	{
+		return 1;
+	}
+	return loader_host_register((loader_impl)impl, loader_impl_handle_context(handle),
+		name, invoke, NULL, return_type, arg_size, args_type_id, data);
+}
+
+int loader_register_global(void *impl, const char *name, loader_register_invoke invoke, type_id return_type, size_t arg_size, type_id args_type_id[], void *data)
+{
+	return loader_host_register((loader_impl)impl, NULL, name, invoke, NULL, return_type,
+		arg_size, args_type_id, data);
 }
 
 void loader_detour(detour d)
@@ -619,6 +631,11 @@ int loader_handle_populate(void *handle_dest, void *handle_src)
 	context ctx_dest = loader_impl_handle_context(handle_dest);
 	context ctx_src = loader_impl_handle_context(handle_src);
 	char *duplicated_key;
+
+	if (ctx_dest == NULL || ctx_src == NULL)
+	{
+		return 1;
+	}
 
 	if (context_contains(ctx_src, ctx_dest, &duplicated_key) == 0 && duplicated_key != NULL)
 	{
