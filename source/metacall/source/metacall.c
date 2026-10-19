@@ -219,6 +219,12 @@ static int metacall_self_load(void)
 		return 1;
 	}
 
+	/* Strip trailing slash if present to avoid double slash //.. which breaks canonical path resolution */
+	if (length > 0 && (lib_path[length - 1] == '/' || lib_path[length - 1] == '\\'))
+	{
+		lib_path[length - 1] = '\0';
+	}
+
 	snprintf(lib_file, sizeof(lib_file), "%s/%s%s.%s", lib_path, dynlink_prefix(), name, dynlink_extension());
 	snprintf(hdr_path, sizeof(hdr_path), "%s/../include/metacall/metacall.h", lib_path);
 	snprintf(inc_path, sizeof(inc_path), "%s/../include", lib_path);
@@ -231,6 +237,28 @@ static int metacall_self_load(void)
 		if (portability_path_file_exists(hdr_path) != 0)
 		{
 			return 1;
+		}
+	}
+
+	{
+		dynlink_path canonical_path = { 0 };
+
+		if (portability_path_canonical(inc_path, strnlen(inc_path, sizeof(inc_path)) + 1, canonical_path, sizeof(canonical_path)) > 1)
+		{
+			strncpy(inc_path, canonical_path, sizeof(inc_path));
+			inc_path[sizeof(inc_path) - 1] = '\0';
+		}
+
+		if (portability_path_canonical(hdr_path, strnlen(hdr_path, sizeof(hdr_path)) + 1, canonical_path, sizeof(canonical_path)) > 1)
+		{
+			strncpy(hdr_path, canonical_path, sizeof(hdr_path));
+			hdr_path[sizeof(hdr_path) - 1] = '\0';
+		}
+
+		if (portability_path_canonical(lib_file, strnlen(lib_file, sizeof(lib_file)) + 1, canonical_path, sizeof(canonical_path)) > 1)
+		{
+			strncpy(lib_file, canonical_path, sizeof(lib_file));
+			lib_file[sizeof(lib_file) - 1] = '\0';
 		}
 	}
 
@@ -2160,7 +2188,6 @@ void *metacallfms_await(void *func, const char *buffer, size_t size, void *alloc
 			if (args_count != value_type_count(v))
 			{
 				value_type_destroy(v);
-
 				return NULL;
 			}
 
